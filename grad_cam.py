@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument('--image-size', type=int, default=512)  # resize后的图像大小
     parser.add_argument('--freeze-cnn', default=False)
     parser.add_argument('--batch-size', type=int, default=4)
-    parser.add_argument('--eval', type=str, choices=['best', 'best_20', 'final'], default="best")
+    parser.add_argument('--eval', type=str, choices=['best', 'final'], default="best")
     parser.add_argument('--root-path', type=str, default='/home/tmk/project/retinal_classfication/',
                         help='input image path')
     parser.add_argument('--weight-path', type=str, default='weights/')

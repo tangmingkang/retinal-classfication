@@ -33,8 +33,8 @@ def get_args():
     parser.add_argument('--out-dim', type=int, default=2)
     parser.add_argument('--image-size', type=int, default=512)  # resize后的图像大小
     parser.add_argument('--train-fold', type=str, default='0,1,2,3,4,5')
-    parser.add_argument('--DEBUG', default=False)
-    parser.add_argument('--freeze-cnn', default=False)
+    parser.add_argument('--DEBUG', action='store_true', default=False)
+    parser.add_argument('--freeze-cnn', action='store_true', default=False) # 冻结CNN参数
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--init-lr', type=float, default=3e-5)
     parser.add_argument('--n-epochs', type=int, default=15)

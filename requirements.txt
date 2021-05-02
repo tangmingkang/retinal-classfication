@@ -1,0 +1,15 @@
+tqdm
+warmup_scheduler
+albumentations
+torch
+torchvision
+numpy
+opencv_python_headless
+geffnet
+scikit_image
+pandas
+resnest
+pretrainedmodels
+Pillow
+scikit_learn
+skimage
