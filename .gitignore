@@ -1,9 +1,12 @@
 # dataset log weight visualization output shubs
-/datasets/image/*
+/datasets/
 /logs/*
 /subs/*
 /visualization/*
 /weights/*
+# /scripts/predict.sh
+# /scripts/train.sh
+# /scripts/visual.sh
 .*
 !.gitignore
 # Byte-compiled / optimized / DLL files

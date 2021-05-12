@@ -27,7 +27,7 @@ class Swish_Module(nn.Module):
 
 
 class Effnet(nn.Module):
-    def __init__(self, enet_type, out_dim, pretrained=True, freeze_cnn=False):
+    def __init__(self, enet_type, out_dim, pretrained=True, freeze_cnn=False, load_model=False):
         super(Effnet, self).__init__()
         self.enet = geffnet.create_model(enet_type, pretrained=pretrained)
         self.dropouts = nn.ModuleList([

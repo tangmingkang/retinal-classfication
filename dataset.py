@@ -13,19 +13,23 @@ class RetinalDataset(Dataset):
         self.mode = mode
         self.transform = transform
         self.num=0
+        self.image_labels=[]
+        for _, row in csv.iterrows():
+            self.image_labels.append(row[1:-2])
 
     def __len__(self):
         return self.csv.shape[0]
 
     def get_num(self):
-        num_hypertension=self.csv.loc[(self.csv['diagnosis'] == 1)].shape[0]
-        num_normal=self.csv.loc[(self.csv['diagnosis'] == 0)].shape[0]
-        return num_normal, num_hypertension
+        names=['opacity','diabetic retinopathy','glaucoma','macular edema','macular degeneration','retinal vascular occlusion','normal']
+        numbers=[]
+        for name in names:
+            numbers.append(self.csv.loc[(self.csv[name] == 1)].shape[0])
+        return numbers
     
     def __getitem__(self, index):
         row = self.csv.iloc[index]
         image = cv2.imread(row.filepath) # 默认读出的是BGR模式
-        
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # m*n*3
         if self.transform is not None:
             res = self.transform(image=image)
@@ -38,7 +42,7 @@ class RetinalDataset(Dataset):
         if self.mode == 'test':
             return data
         else:
-            return data, torch.tensor(self.csv.iloc[index].diagnosis).long()
+            return data, torch.FloatTensor(self.image_labels[index])
 
 def get_transforms(image_size):
 
@@ -80,7 +84,8 @@ def get_transforms(image_size):
 df_train['image_name','image_path','diagnosis','fold']
 '''
 def get_df(kernel_type, out_dim, data_dir):
-    df_train = pd.read_csv(os.path.join(data_dir, 'label.csv'), dtype={'image_name':str})
-    df_train['filepath'] = df_train['image_name'].apply(lambda x: os.path.join(data_dir, 'image/', f'{x}.jpg'))
-    _idx=1 # 1对应为高血压
-    return df_train, _idx
+    df_train = pd.read_csv(os.path.join(data_dir, 'label.csv'), dtype={'filename':str})
+    df_test = pd.read_csv(os.path.join(data_dir, 'sample_submission.csv'), dtype={'filename':str})
+    df_train['filepath'] = df_train['filename'].apply(lambda x: os.path.join(data_dir, 'train/train/', x))
+    df_test['filepath'] = df_test['filename'].apply(lambda x: os.path.join(data_dir, 'test/test/', x))
+    return df_train,df_test

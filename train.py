@@ -6,8 +6,9 @@ import json
 import numpy as np
 import pandas as pd
 import pdb
+from pandas.io.parquet import FastParquetImpl
 from tqdm import tqdm
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score,f1_score
 from sklearn.model_selection import StratifiedKFold
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -29,16 +30,17 @@ def get_args():
     parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='0')
     parser.add_argument('--enet-type', type=str, default='efficientnet_b3')
     parser.add_argument('--kernel-type', type=str)
-    parser.add_argument('--data-dir', type=str, default='/home/tmk/project/retinal_classfication/datasets/')
-    parser.add_argument('--out-dim', type=int, default=2)
-    parser.add_argument('--image-size', type=int, default=512)  # resize后的图像大小
-    parser.add_argument('--train-fold', type=str, default='0,1,2,3,4,5')
+    parser.add_argument('--data-dir', type=str, default='/home/tmk/project/retinal_classfication/datasets/retionopathy')
+    parser.add_argument('--out-dim', type=int, default=7)
+    parser.add_argument('--image-size', type=int, default=224)  # resize后的图像大小
+    parser.add_argument('--train-fold', type=str, default='0,1,2,3,4,5,6')
     parser.add_argument('--DEBUG', action='store_true', default=False)
     parser.add_argument('--freeze-cnn', action='store_true', default=False) # 冻结CNN参数
-    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--init-lr', type=float, default=3e-5)
-    parser.add_argument('--n-epochs', type=int, default=15)
-    parser.add_argument('--num-workers', type=int, default=4)
+    parser.add_argument('--n-epochs', type=int, default=80)
+    parser.add_argument('--num-workers', type=int, default=8)
+    parser.add_argument('--load-model', action='store_true', default=False) # 加载训练过的模型继续训练
     args, _ = parser.parse_known_args()
     return args
 
@@ -54,60 +56,48 @@ def get_trans(img, I):
         return img.flip(3)
     elif I % 4 == 3:
         return img.flip(2).flip(3)
+    
+def multi_label_f1(y_gt, y_pred, threshold=0.5):
+    f1_out = []
+    gt_np = y_gt.to("cpu").numpy()
+    pred_np = (y_pred.to("cpu").numpy() > threshold) * 1.0
+    assert gt_np.shape == pred_np.shape, "y_gt and y_pred should have the same size"
+    for i in range(gt_np.shape[1]):
+        f1_out.append(f1_score(gt_np[:, i], pred_np[:, i]))
+    return f1_out
 
 
-def val_epoch(model, loader, _idx, n_test=1, get_output=False):
+def val_epoch(model, loader, n_test=1, get_output=False):
     model.eval()
     val_loss = []
-    LOGITS = []
-    PROBS = []
-    TARGETS = []
+    out_pred = torch.FloatTensor().to(device)
+    out_gt = torch.FloatTensor().to(device)  
     with torch.no_grad():
         for (data, target) in tqdm(loader):
             data, target = data.to(device), target.to(device)
+            out_gt = torch.cat((out_gt, target), 0)
             logits = torch.zeros((data.shape[0], args.out_dim)).to(device)
-            probs = torch.zeros((data.shape[0], args.out_dim)).to(device)
             for I in range(n_test):
                 l = model(get_trans(data, I))
                 logits += l
-                probs += l.softmax(1)
             logits /= n_test
-            probs /= n_test
-
-            LOGITS.append(logits.detach().cpu())
-            PROBS.append(probs.detach().cpu())
-            TARGETS.append(target.detach().cpu())
-
+            # logits = model(data)
+            out_pred = torch.cat((out_pred, logits), 0)
             loss = criterion(logits, target)
             val_loss.append(loss.detach().cpu().numpy())
-
     val_loss = np.mean(val_loss)
-    LOGITS = torch.cat(LOGITS).numpy()
-    PROBS = torch.cat(PROBS).numpy()
-    TARGETS = torch.cat(TARGETS).numpy()
-
     if get_output:
-        return LOGITS, PROBS
+        return logits
     else:
-        acc = (PROBS.argmax(1) == TARGETS).mean() * 100.
-        auc = roc_auc_score((TARGETS == _idx).astype(float), PROBS[:, _idx])
-        acc_list_0=[]
-        acc_list_1=[]
-        for i in range(len(TARGETS)):
-            if int(TARGETS[i])==0:
-                acc_list_0.append(PROBS.argmax(1)[i]==TARGETS[i])
-            elif int(TARGETS[i])==1:
-                acc_list_1.append(PROBS.argmax(1)[i]==TARGETS[i])
-        acc_0 = np.array(acc_list_0).mean() * 100.
-        acc_1 = np.array(acc_list_1).mean() * 100.
-        return val_loss, acc, auc, acc_0, acc_1
+        scores=np.array(multi_label_f1(out_gt, out_pred))
+        return val_loss, scores.mean(), scores
 
 
 def train_epoch(model, loader, optimizer):
     model.train()
     train_loss = []
     bar = tqdm(loader)
-    for (data, target) in bar:  # [tensor(batchsize, 3, 512, 512),tensor(batchsize, 14)]  tensor(2)
+    for (data, target) in bar:
         optimizer.zero_grad()
 
         data, target = data.to(device), target.to(device)
@@ -129,7 +119,7 @@ def train_epoch(model, loader, optimizer):
     return train_loss
 
 
-def run(folds, df, transforms_train, transforms_val, _idx):
+def run(folds, df, transforms_train, transforms_val):
     if args.DEBUG:
         args.n_epochs = 3
         df_train = df[df['fold'].isin(folds)].sample(args.batch_size * 4)
@@ -148,19 +138,23 @@ def run(folds, df, transforms_train, transforms_val, _idx):
         args.enet_type,
         out_dim=args.out_dim,
         pretrained=True,
-        freeze_cnn=args.freeze_cnn
+        freeze_cnn=args.freeze_cnn,
+        load_model=args.load_model
     )
+    para_num=sum(p.numel() for p in model.parameters() if p.requires_grad)
+    content=f'Number of trainable parameters:{para_num}\n'
     if DP:
         pass
     model = model.to(device)
 
-    auc_max = 0.
+    score_max = 0.
     if args.DEBUG:
         model_file_best  = os.path.join(args.model_dir+'/debug', f'{args.kernel_type}_best.pth')
         model_file_final = os.path.join(args.model_dir+'/debug', f'{args.kernel_type}_final.pth')
     else:
         model_file_best  = os.path.join(args.model_dir, f'{args.kernel_type}_best.pth')
         model_file_final = os.path.join(args.model_dir, f'{args.kernel_type}_final.pth')
+    
     if args.freeze_cnn:
         optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.init_lr)
     else:
@@ -170,10 +164,10 @@ def run(folds, df, transforms_train, transforms_val, _idx):
     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, args.n_epochs - 1)
     scheduler_warmup = GradualWarmupSchedulerV2(optimizer, multiplier=10, total_epoch=1,
                                                 after_scheduler=scheduler_cosine)
-    num_normal, num_hypertension = dataset_train.get_num()
-    content=f'total num of train:{len(dataset_train)},normal examples:{num_normal},hypertension examples:{num_hypertension}'+'\n'
-    num_normal, num_hypertension = dataset_valid.get_num()
-    content+=f'total num of val:{len(dataset_valid)},normal examples:{num_normal},hypertension examples:{num_hypertension}'+'\n'
+    nums = dataset_train.get_num()
+    content+=f'total num of train:{len(dataset_train)},class nums:{nums}'+'\n'
+    nums = dataset_valid.get_num()
+    content+=f'total num of val:{len(dataset_valid)},class nums:{nums}'+'\n'
     if args.DEBUG:
         with open(os.path.join(args.log_dir+'/debug', f'log_{args.kernel_type}.txt'), 'a') as appender:
             appender.write(content)
@@ -184,9 +178,9 @@ def run(folds, df, transforms_train, transforms_val, _idx):
         print(time.ctime(), f'Epoch {epoch}')
 
         train_loss = train_epoch(model, train_loader, optimizer)
-        val_loss, acc, auc, acc_0, acc_1= val_epoch(model, valid_loader, _idx)
-
-        content = time.ctime() + ' ' + f'Epoch {epoch}, lr: {optimizer.param_groups[0]["lr"]:.7f}, train loss: {train_loss:.5f}, valid loss: {(val_loss):.5f}, acc: {(acc):.4f}, auc: {(auc):.6f} acc_0: {(acc_0):.6f}, acc_1: {(acc_1):.6f}.'
+        val_loss, mean_score, scores= val_epoch(model, valid_loader)
+        
+        content = time.ctime() + ' ' + f'Epoch {epoch}, lr: {optimizer.param_groups[0]["lr"]:.7f}, train loss: {train_loss:.5f}, valid loss: {val_loss:.5f}, mean_score: {mean_score:.4f}, scores: {scores[0]:.4f} {scores[1]:.4f} {scores[2]:.4f} {scores[3]:.4f} {scores[4]:.4f} {scores[5]:.4f} {scores[6]:.4f}.'
         print(content)
         if args.DEBUG:
             with open(os.path.join(args.log_dir+'/debug', f'log_{args.kernel_type}.txt'), 'a') as appender:
@@ -197,10 +191,10 @@ def run(folds, df, transforms_train, transforms_val, _idx):
         scheduler_warmup.step()
         if epoch == 2: scheduler_warmup.step()  # bug workaround
 
-        if auc > auc_max:
-            print('auc_max ({:.6f} --> {:.6f}). Saving model ...'.format(auc_max, auc))
+        if mean_score > score_max:
+            print('score_max ({:.6f} --> {:.6f}). Saving model ...'.format(score_max, mean_score))
             torch.save(model.state_dict(), model_file_best)
-            auc_max = auc
+            score_max = mean_score
 
     torch.save(model.state_dict(), model_file_final)
 
@@ -215,7 +209,7 @@ def set_seed(seed=0):
 
 
 def main():
-    df, _idx = get_df(
+    df,_ = get_df(
         args.kernel_type,
         args.out_dim,
         args.data_dir
@@ -224,7 +218,7 @@ def main():
     transforms_train, transforms_val = get_transforms(args.image_size)
 
     folds = [int(i) for i in args.train_fold.split(',')]
-    run(folds, df, transforms_train, transforms_val, _idx)
+    run(folds, df, transforms_train, transforms_val)
 
 
 if __name__ == '__main__':
@@ -263,6 +257,13 @@ if __name__ == '__main__':
     set_seed()
 
     device = torch.device('cuda')
-    criterion = nn.CrossEntropyLoss()
+    # LOSS WEIGHT
+    pos_w = None
+    w = None
+    if False:
+        pos_w=[1.3, 1.6, 4, 5.6, 5.2, 6, 5.6]
+        w = [3., 1, 1, 1, 1,1, 1]
+    
+    criterion = nn.BCEWithLogitsLoss(weight=w, pos_weight=pos_w)
 
     main()
