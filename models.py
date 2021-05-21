@@ -39,6 +39,7 @@ class Effnet(nn.Module):
         if freeze_cnn:
             for p in self.enet.parameters():
                 p.requires_grad = False
+        self.sig=nn.Sigmoid()
             
     def extract(self, x):
         x = self.enet(x)
@@ -52,6 +53,7 @@ class Effnet(nn.Module):
             else:
                 out += self.myfc(dropout(x))
         out /= len(self.dropouts)
+        out=self.sig(out)
         return out
 
 

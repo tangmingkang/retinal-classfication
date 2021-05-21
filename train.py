@@ -27,10 +27,10 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-dir', type=str, default='./weights')
     parser.add_argument('--log-dir', type=str, default='./logs')
-    parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='0')
+    parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='7')
     parser.add_argument('--enet-type', type=str, default='efficientnet_b3')
     parser.add_argument('--kernel-type', type=str)
-    parser.add_argument('--data-dir', type=str, default='/home/tmk/project/retinal_classfication/datasets/retionopathy')
+    parser.add_argument('--data-dir', type=str, default='/home/ych/retinal_classfication/datasets/retinopathy')
     parser.add_argument('--out-dim', type=int, default=7)
     parser.add_argument('--image-size', type=int, default=224)  # resize后的图像大小
     parser.add_argument('--train-fold', type=str, default='0,1,2,3,4,5,6')
@@ -264,6 +264,6 @@ if __name__ == '__main__':
         pos_w=[1.3, 1.6, 4, 5.6, 5.2, 6, 5.6]
         w = [3., 1, 1, 1, 1,1, 1]
     
-    criterion = nn.BCEWithLogitsLoss(weight=w, pos_weight=pos_w)
+    criterion = nn.BCELoss(weight=w)
 
     main()
