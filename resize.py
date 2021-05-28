@@ -14,6 +14,6 @@ L=file_name('/home/data/ISIC_512')
 print(len(L))
 for path in L:
     pic = Image.open(path)
-    pic = pic.resize((512, 512))
+    pic = pic.resize((224, 224))
     pic.save(path)
 print('over')

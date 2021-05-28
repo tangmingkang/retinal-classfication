@@ -12,29 +12,32 @@ from torchvision import models
 from grad_cam.interpretability.grad_cam import GradCAM, GradCamPlusPlus
 from grad_cam.interpretability.guided_back_propagation import GuidedBackPropagation
 from models import Effnet
+import os
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--network', type=str, default='effnet')
+    parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='7')
     parser.add_argument('--enet-type', type=str, default='efficientnet_b3')
-    parser.add_argument('--kernel-type', type=str)
-    parser.add_argument('--out-dim', type=int, default=2)
-    parser.add_argument('--image-size', type=int, default=512)  # resize后的图像大小
+    parser.add_argument('--kernel-type', type=str,default='efficientnet_b3_size224_outdim7_bs128')
+    parser.add_argument('--out-dim', type=int, default=7)
+    parser.add_argument('--image-size', type=int, default=224)  # resize后的图像大小
     parser.add_argument('--freeze-cnn', default=False)
-    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--eval', type=str, choices=['best', 'final'], default="best")
     parser.add_argument('--root-path', type=str, default='/home/tmk/project/retinal_classfication/',
                         help='input image path')
     parser.add_argument('--weight-path', type=str, default='weights/')
-    parser.add_argument('--image-path', type=str, default='datasets/image/000326720200314010002.jpg',
+    parser.add_argument('--image-path', type=str, default='datasets/retionopathy/train/train/3f58d128caf6.jpg',
                         help='input image name')
     parser.add_argument('--layer-name', type=str, default=None,
                         help='last convolutional layer name')
-    parser.add_argument('--class-id', type=int, default=None,
+    parser.add_argument('--class-id', type=int, default=2,
                         help='class id') # Grad-CAM和Guided Back Propagation反向传播使用的类别id（可选,默认网络预测的类别)
     parser.add_argument('--output-dir', type=str, default='visualization/',
                         help='output directory to save results')
     args = parser.parse_args()
+    os.environ['CUDA_VISIBLE_DEVICES']=args.CUDA_VISIBLE_DEVICES
     return args
 
 def get_net(net_name, weight_path=None):
@@ -87,7 +90,6 @@ def get_net(net_name, weight_path=None):
         net.load_state_dict(torch.load(weight_path))
     return net
 
-
 def get_last_conv_name(net):
     """
     获取网络的最后一个卷积层的名字
@@ -100,9 +102,6 @@ def get_last_conv_name(net):
             layer_name = name
     return layer_name
 
-
-
-
 def gen_cam(image, mask):
     """
     生成CAM图
@@ -114,7 +113,6 @@ def gen_cam(image, mask):
     heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
     heatmap = np.float32(heatmap) / 255
     heatmap = heatmap[..., ::-1]  # gbr to rgb
-
     # 合并heatmap到原始图像
     cam = heatmap + np.float32(image)
     return norm_image(cam), (heatmap * 255).astype(np.uint8)
@@ -147,6 +145,7 @@ def gen_gb(grad):
 
 def save_image(image_dicts, input_image_name, network, output_dir):
     prefix = os.path.splitext(input_image_name)[0]
+    prefix+=str(args.class_id)
     for key, image in image_dicts.items():
         os.makedirs(output_dir+str(key),exist_ok=True)
         io.imsave(output_dir+str(key)+f'/{prefix}.jpg',image)
@@ -165,7 +164,7 @@ def main():
     inputs = torch.tensor(image, requires_grad=True)
 
     img = io.imread(args.image_path)
-    img = np.float32(cv2.resize(img, (512, 512))) / 255
+    img = np.float32(cv2.resize(img, (224, 224))) / 255
 
     # 输出图像
     image_dict = {}

@@ -78,7 +78,7 @@ class GradCAM(object):
         cam -= np.min(cam)
         cam /= np.max(cam)
         # resize to 224*224
-        cam = cv2.resize(cam, (512, 512))
+        cam = cv2.resize(cam, (224, 224))
         return cam
 
 
@@ -120,5 +120,5 @@ class GradCamPlusPlus(GradCAM):
         cam -= np.min(cam)
         cam /= np.max(cam)
         # resize to 224*224
-        cam = cv2.resize(cam, (512, 512))
+        cam = cv2.resize(cam, (224, 224))
         return cam

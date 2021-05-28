@@ -4,6 +4,7 @@ import random
 import argparse
 import json
 import numpy as np
+from numpy.core.numeric import True_
 import pandas as pd
 import pdb
 from pandas.io.parquet import FastParquetImpl
@@ -20,14 +21,14 @@ from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from util import GradualWarmupSchedulerV2
 from dataset import get_df, get_transforms, RetinalDataset
-from models import Effnet, Resnest, Seresnext
+from models import Effnet, Resnest, Seresnext, MyWcploss
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-dir', type=str, default='./weights')
     parser.add_argument('--log-dir', type=str, default='./logs')
-    parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='0')
+    parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str, default='1')
     parser.add_argument('--enet-type', type=str, default='efficientnet_b3')
     parser.add_argument('--kernel-type', type=str)
     parser.add_argument('--data-dir', type=str, default='/home/tmk/project/retinal_classfication/datasets/retionopathy')
@@ -35,11 +36,15 @@ def get_args():
     parser.add_argument('--image-size', type=int, default=224)  # resize后的图像大小
     parser.add_argument('--train-fold', type=str, default='0,1,2,3,4,5,6')
     parser.add_argument('--DEBUG', action='store_true', default=False)
+    parser.add_argument('--use-weight', action='store_true', default=True)
+    parser.add_argument('--use-wcpweight', action='store_true', default=False)
     parser.add_argument('--freeze-cnn', action='store_true', default=False) # 冻结CNN参数
-    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--init-lr', type=float, default=3e-5)
+    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--n-epochs', type=int, default=80)
-    parser.add_argument('--num-workers', type=int, default=8)
+    parser.add_argument('--num-workers', type=int, default=4)
+    parser.add_argument('--pretrain-cnn', action='store_true', default=True) # 加载预训练cnn
+    parser.add_argument('--pretrain_file', type=str, default='/home/tmk/project/retinal_pretrain/weights/efficientnet_b3_size224_outdim5_bs128_best.pth')
     parser.add_argument('--load-model', action='store_true', default=False) # 加载训练过的模型继续训练
     args, _ = parser.parse_known_args()
     return args
@@ -98,12 +103,15 @@ def train_epoch(model, loader, optimizer):
     train_loss = []
     bar = tqdm(loader)
     for (data, target) in bar:
+        
         optimizer.zero_grad()
 
         data, target = data.to(device), target.to(device)
+        
         logits = model(data)
 
         loss = criterion(logits, target)
+        
         loss.backward()
 
         # if args.image_size in [896, 576]:
@@ -113,9 +121,11 @@ def train_epoch(model, loader, optimizer):
         loss_np = loss.detach().cpu().numpy()
         train_loss.append(loss_np)
         smooth_loss = sum(train_loss[-100:]) / min(len(train_loss), 100)
+        
         bar.set_description('loss: %.5f, smth: %.5f' % (loss_np, smooth_loss))
 
     train_loss = np.mean(train_loss)
+    
     return train_loss
 
 
@@ -139,7 +149,9 @@ def run(folds, df, transforms_train, transforms_val):
         out_dim=args.out_dim,
         pretrained=True,
         freeze_cnn=args.freeze_cnn,
-        load_model=args.load_model
+        load_model=args.load_model,
+        pretrain_cnn=args.pretrain_cnn,
+        pretrain_file=args.pretrain_file
     )
     para_num=sum(p.numel() for p in model.parameters() if p.requires_grad)
     content=f'Number of trainable parameters:{para_num}\n'
@@ -232,6 +244,12 @@ if __name__ == '__main__':
         args.kernel_type=f'{args.enet_type}_size{args.image_size}_outdim{args.out_dim}_bs{args.batch_size}'
         if args.freeze_cnn:
             args.kernel_type+='_freeze'
+        if args.pretrain_cnn:
+            args.kernel_type+='_pretrain'
+        if args.use_weight:
+            args.kernel_type+='_usew'
+        elif args.use_wcpweight:
+            args.kernel_type+='_usewcp'
 
     if args.DEBUG:
         with open(os.path.join(args.log_dir+'/debug', f'log_{args.kernel_type}.txt'), 'w') as appender:
@@ -260,10 +278,18 @@ if __name__ == '__main__':
     # LOSS WEIGHT
     pos_w = None
     w = None
-    if False:
+    if args.use_weight:
         pos_w=[1.3, 1.6, 4, 5.6, 5.2, 6, 5.6]
         w = [3., 1, 1, 1, 1,1, 1]
-    
-    criterion = nn.BCEWithLogitsLoss(weight=w, pos_weight=pos_w)
+    if pos_w is not None:
+        pos_w = torch.tensor(pos_w, device=device)
+    if w is not None:
+        w = torch.tensor(w, device=device)
+    if args.use_wcpweight:
+        criterion = MyWcploss().cuda()
+    elif args.use_weight:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_w,weight=w).cuda()
+    else:
+        criterion = nn.BCEWithLogitsLoss().cuda()
 
     main()

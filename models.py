@@ -3,6 +3,7 @@ import torch.nn as nn
 import geffnet
 from resnest.torch import resnest101
 from pretrainedmodels import se_resnext101_32x4d
+import pdb
 
 
 sigmoid = nn.Sigmoid()
@@ -24,21 +25,48 @@ class Swish(torch.autograd.Function):
 class Swish_Module(nn.Module):
     def forward(self, x):
         return Swish.apply(x)
+    
+class MyWcploss(nn.Module):
+    def __init__(self):
+        super(MyWcploss, self).__init__()
+
+
+    def forward(self, pred, gt):
+        eposion = 1e-10
+        sigmoid_pred = torch.sigmoid(pred)
+        count_pos = torch.sum(gt)*1.0+eposion
+        count_neg = torch.sum(1.-gt)*1.0
+        beta = count_neg/count_pos
+        beta_back = count_pos / (count_pos + count_neg)
+
+
+        bce1 = nn.BCEWithLogitsLoss(pos_weight=beta)
+        loss = beta_back*bce1(pred, gt)
+
+        return loss
 
 
 class Effnet(nn.Module):
-    def __init__(self, enet_type, out_dim, pretrained=True, freeze_cnn=False, load_model=False):
+    def __init__(self, enet_type, out_dim, pretrained=True, freeze_cnn=False, load_model=False ,pretrain_cnn=False,pretrain_file=''):
         super(Effnet, self).__init__()
         self.enet = geffnet.create_model(enet_type, pretrained=pretrained)
+        in_ch = self.enet.classifier.in_features
+        self.enet.classifier = nn.Identity()
+        if pretrain_cnn:
+            pretrained_dict=torch.load(pretrain_file)
+            model_dict=self.state_dict()
+            pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+            model_dict.update(pretrained_dict)
+            self.load_state_dict(model_dict)
+            
         self.dropouts = nn.ModuleList([
             nn.Dropout(0.5) for _ in range(5)
         ])
-        in_ch = self.enet.classifier.in_features
         self.myfc = nn.Linear(in_ch, out_dim)
-        self.enet.classifier = nn.Identity()
         if freeze_cnn:
             for p in self.enet.parameters():
                 p.requires_grad = False
+            
             
     def extract(self, x):
         x = self.enet(x)

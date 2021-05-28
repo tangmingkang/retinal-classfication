@@ -31,6 +31,7 @@ class RetinalDataset(Dataset):
         row = self.csv.iloc[index]
         image = cv2.imread(row.filepath) # 默认读出的是BGR模式
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # m*n*3
+        
         if self.transform is not None:
             res = self.transform(image=image)
             image = res['image'].astype(np.float32) # 512*512*3

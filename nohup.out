@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "train.py", line 286, in <module>
+    criterion = nn.BCELoss(weight=w,pos_w=pos_w)
+TypeError: __init__() got an unexpected keyword argument 'pos_w'
